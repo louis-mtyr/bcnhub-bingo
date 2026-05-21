@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bingo Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <h1>✦ Bingo Login ✦</h1>
+            <form method="POST" action="/login">
+                <div class="form-group">
+                    <input type="text" name="username" placeholder="Enter your username" required autofocus>
+                </div>
+                <button type="submit" class="btn-primary">Join Game</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

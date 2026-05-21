@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manifest</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="manifest-container">
+        <div class="header">
+            <h1>✦ Manifest Your Predictions ✦</h1>
+            <div class="user-info">
+                <span>Welcome, <strong>{{ username }}</strong></span>
+                <a href="/bingo" class="btn-secondary">Back to Bingo</a>
+                <a href="/logout" class="btn-secondary">Logout</a>
+            </div>
+        </div>
+
+        <div class="manifest-content">
+            <p class="instructions">Select up to 10 items you think are most likely to happen</p>
+            <p class="counter">Selected: <span id="selectedCount">0</span> / 10</p>
+
+            <div id="itemsGrid" class="manifest-grid"></div>
+
+            <div class="submit-section">
+                <button id="submitBtn" class="btn-primary" onclick="submitManifest()" disabled>
+                    Submit Predictions
+                </button>
+            </div>
+
+            <div id="resultsSection" style="display: none;">
+                <h2>Top 10 Most Predicted Items</h2>
+                <div id="topItems" class="top-items"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allItems = [];
+        let votes = {};
+        let myChoices = [];
+        let hasSubmitted = false;
+
+        async function loadItems() {
+            const response = await fetch('/api/manifest/items');
+            const data = await response.json();
+            
+            allItems = data.items;
+            votes = data.votes;
+            myChoices = data.user_choices;
+            hasSubmitted = data.has_submitted;
+            
+            renderItems();
+            
+            // If already submitted, show results
+            if (hasSubmitted) {
+                document.getElementById('itemsGrid').style.opacity = '0.5';
+                document.getElementById('itemsGrid').style.pointerEvents = 'none';
+                document.getElementById('submitBtn').style.display = 'none';
+                document.querySelector('.instructions').textContent = 'You have already submitted your predictions';
+                
+                // Show top items
+                showTopItems();
+            }
+        }
+
+        function renderItems() {
+            const gridEl = document.getElementById('itemsGrid');
+            gridEl.innerHTML = '';
+            
+            allItems.forEach(item => {
+                const itemEl = document.createElement('div');
+                itemEl.className = 'manifest-item';
+                
+                if (myChoices.includes(item)) {
+                    itemEl.classList.add('selected');
+                }
+                
+                itemEl.textContent = item;
+                
+                if (!hasSubmitted) {
+                    itemEl.onclick = () => toggleItem(item);
+                } else {
+                    itemEl.style.cursor = 'not-allowed';
+                }
+                
+                gridEl.appendChild(itemEl);
+            });
+            
+            updateCounter();
+        }
+
+        async function toggleItem(item) {
+            if (hasSubmitted) {
+                return; // Can't toggle if already submitted
+            }
+            
+            const response = await fetch('/api/manifest/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ item })
+            });
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            
+            myChoices = data.choices;
+            renderItems();
+        }
+
+        function updateCounter() {
+            document.getElementById('selectedCount').textContent = myChoices.length;
+            document.getElementById('submitBtn').disabled = myChoices.length !== 10;
+        }
+
+        async function submitManifest() {
+            if (hasSubmitted) {
+                alert('You have already submitted your predictions');
+                return;
+            }
+            
+            const response = await fetch('/api/manifest/submit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+            
+            hasSubmitted = true;
+            
+            // Show results
+            const resultsEl = document.getElementById('resultsSection');
+            const topItemsEl = document.getElementById('topItems');
+            
+            topItemsEl.innerHTML = '';
+            data.top_items.forEach(([item, count], index) => {
+                const itemEl = document.createElement('div');
+                itemEl.className = 'top-item';
+                itemEl.innerHTML = `
+                    <span class="rank">#${index + 1}</span>
+                    <span class="item-text">${item}</span>
+                    <span class="vote-count">${count} vote${count !== 1 ? 's' : ''}</span>
+                `;
+                topItemsEl.appendChild(itemEl);
+            });
+            
+            resultsEl.style.display = 'block';
+            
+            // Hide the submit button and disable items grid
+            document.getElementById('submitBtn').style.display = 'none';
+            document.getElementById('itemsGrid').style.opacity = '0.5';
+            document.getElementById('itemsGrid').style.pointerEvents = 'none';
+            document.querySelector('.instructions').textContent = 'You have already submitted your predictions';
+        }
+        
+        async function showTopItems() {
+            // Fetch current top items
+            const sortedVotes = Object.entries(votes).sort((a, b) => b[1] - a[1]).slice(0, 10);
+            
+            if (sortedVotes.length === 0) return;
+            
+            const resultsEl = document.getElementById('resultsSection');
+            const topItemsEl = document.getElementById('topItems');
+            
+            topItemsEl.innerHTML = '';
+            sortedVotes.forEach(([item, count], index) => {
+                const itemEl = document.createElement('div');
+                itemEl.className = 'top-item';
+                itemEl.innerHTML = `
+                    <span class="rank">#${index + 1}</span>
+                    <span class="item-text">${item}</span>
+                    <span class="vote-count">${count} vote${count !== 1 ? 's' : ''}</span>
+                `;
+                topItemsEl.appendChild(itemEl);
+            });
+            
+            resultsEl.style.display = 'block';
+        }
+
+        loadItems();
+    </script>
+</body>
+</html>

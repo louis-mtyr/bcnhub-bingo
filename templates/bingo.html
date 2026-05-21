@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bingo Game</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="game-container">
+        <!-- Left sidebar - User list -->
+        <div class="sidebar">
+            <h2>Players</h2>
+            <div id="userList"></div>
+        </div>
+
+        <!-- Main content - Bingo grid -->
+        <div class="main-content">
+            <div class="header">
+                <h1>✦ Bingo Game ✦</h1>
+                <div class="user-info">
+                    <span>Welcome, <strong>{{ username }}</strong></span>
+                    <a href="/manifest" class="btn-secondary">Manifest</a>
+                    <a href="/logout" class="btn-secondary">Logout</a>
+                </div>
+            </div>
+
+            <div id="congratsMessage" class="congrats-message" style="display: none;">
+                <h2>🎉 CONGRATULATIONS! 🎉</h2>
+                <p>You got BINGO!</p>
+            </div>
+
+            <div class="bingo-board">
+                <div id="bingoGrid" class="bingo-grid"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let myGrid = [];
+        let hasBingo = false;
+        let currentUser = '{{ username }}';
+        let currentViewingUser = null;
+
+        // Load my grid
+        async function loadMyGrid() {
+            const response = await fetch('/api/get_my_grid');
+            const data = await response.json();
+            myGrid = data.grid;
+            hasBingo = data.has_bingo;
+            renderGrid();
+            
+            if (hasBingo) {
+                showCongratsMessage();
+            }
+        }
+
+        // Render the bingo grid
+        function renderGrid() {
+            const gridEl = document.getElementById('bingoGrid');
+            gridEl.innerHTML = '';
+            
+            myGrid.forEach((cell, index) => {
+                const cellEl = document.createElement('div');
+                cellEl.className = 'bingo-cell';
+                if (cell.marked) {
+                    cellEl.classList.add('marked');
+                }
+                cellEl.textContent = cell.text;
+                cellEl.onclick = () => toggleCell(index);
+                gridEl.appendChild(cellEl);
+            });
+        }
+
+        // Toggle cell marked state
+        async function toggleCell(index) {
+            const response = await fetch('/api/toggle_cell', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index })
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                myGrid[index].marked = !myGrid[index].marked;
+                renderGrid();
+                
+                if (data.has_bingo && !hasBingo) {
+                    hasBingo = true;
+                    showCongratsMessage();
+                    loadUsers(); // Refresh user list to show BINGO status
+                } else if (!data.has_bingo && hasBingo) {
+                    // User lost their bingo
+                    hasBingo = false;
+                    hideCongratsMessage();
+                    loadUsers(); // Refresh user list to remove BINGO status
+                }
+            }
+        }
+
+        // Show congratulations message with animation
+        function showCongratsMessage() {
+            const msg = document.getElementById('congratsMessage');
+            msg.style.display = 'block';
+            
+            // Add wave animation to grid cells
+            const cells = document.querySelectorAll('.bingo-cell');
+            cells.forEach((cell, i) => {
+                cell.style.animation = `wave 0.5s ease ${i * 0.02}s`;
+            });
+        }
+
+        // Hide congratulations message and reset animation
+        function hideCongratsMessage() {
+            const msg = document.getElementById('congratsMessage');
+            msg.style.display = 'none';
+            
+            // Remove wave animation from grid cells
+            const cells = document.querySelectorAll('.bingo-cell');
+            cells.forEach(cell => {
+                cell.style.animation = '';
+            });
+        }
+
+        // Load users list
+        async function loadUsers() {
+            const response = await fetch('/api/get_users');
+            const data = await response.json();
+            
+            const userListEl = document.getElementById('userList');
+            userListEl.innerHTML = '';
+            
+            data.users.forEach(user => {
+                const userEl = document.createElement('div');
+                userEl.className = 'user-item';
+                if (user.username === currentUser) {
+                    userEl.classList.add('current-user');
+                }
+                
+                const dot = user.is_connected ? '<span class="dot green"></span>' : '<span class="dot red"></span>';
+                const bingoStatus = user.has_bingo ? ' <span class="bingo-badge">BINGO 🎉</span>' : '';
+                
+                userEl.innerHTML = `${dot} ${user.username}${bingoStatus}`;
+                
+                if (user.username !== currentUser) {
+                    userEl.style.cursor = 'pointer';
+                    userEl.onclick = (e) => viewUserGrid(user.username, e.currentTarget);
+                }
+                
+                userListEl.appendChild(userEl);
+            });
+        }
+
+        // View another user's grid
+        async function viewUserGrid(username, userElement) {
+            // If clicking the same user, toggle off
+            if (currentViewingUser === username) {
+                const existingDialog = document.querySelector('.user-grid-dialog');
+                if (existingDialog) {
+                    existingDialog.remove();
+                }
+                currentViewingUser = null;
+                return;
+            }
+            
+            // Remove any existing dialog
+            const existingDialog = document.querySelector('.user-grid-dialog');
+            if (existingDialog) {
+                existingDialog.remove();
+            }
+            
+            currentViewingUser = username;
+            
+            const response = await fetch(`/api/get_user_grid/${username}`);
+            const data = await response.json();
+            
+            // Create dialog bubble
+            const dialog = document.createElement('div');
+            dialog.className = 'user-grid-dialog';
+            dialog.innerHTML = `
+                <div class="dialog-arrow"></div>
+                <div class="dialog-header">${username}'s Grid</div>
+                <div class="dialog-grid"></div>
+            `;
+            
+            const dialogGrid = dialog.querySelector('.dialog-grid');
+            data.grid.forEach(cell => {
+                const cellEl = document.createElement('div');
+                cellEl.className = 'dialog-cell';
+                if (cell.marked) {
+                    cellEl.classList.add('marked');
+                }
+                cellEl.textContent = cell.text;
+                dialogGrid.appendChild(cellEl);
+            });
+            
+            // Position dialog next to the user element
+            document.body.appendChild(dialog);
+            
+            const rect = userElement.getBoundingClientRect();
+            const dialogLeft = rect.right + 25;
+            const dialogTop = rect.top + rect.height / 2 - dialog.offsetHeight / 2;
+            
+            // Make sure dialog doesn't go off screen
+            const maxLeft = window.innerWidth - dialog.offsetWidth - 20;
+            const maxTop = window.innerHeight - dialog.offsetHeight - 20;
+            
+            dialog.style.position = 'fixed';
+            dialog.style.left = Math.min(dialogLeft, maxLeft) + 'px';
+            dialog.style.top = Math.max(20, Math.min(dialogTop, maxTop)) + 'px';
+        }
+
+        // Initialize
+        loadMyGrid();
+        loadUsers();
+        
+        // Refresh users every 3 seconds
+        setInterval(loadUsers, 3000);
+        
+        // Close dialog when clicking outside
+        document.addEventListener('click', (e) => {
+            const dialog = document.querySelector('.user-grid-dialog');
+            if (dialog && !dialog.contains(e.target) && !e.target.closest('.user-item')) {
+                dialog.remove();
+                currentViewingUser = null;
+            }
+        });
+    </script>
+</body>
+</html>
