@@ -214,6 +214,10 @@ def save_item_votes(votes):
 
 def generate_bingo_grid(items):
     """Generate a random 5x5 bingo grid"""
+    if not items or len(items) == 0:
+        # Return empty grid if no items available
+        return []
+    
     if len(items) < 25:
         # If not enough items, repeat them
         pool = items * (25 // len(items) + 1)
@@ -468,9 +472,13 @@ def logout():
         session.pop('username', None)
     return redirect(url_for('login'))
 
-if __name__ == '__main__':
-    # Initialize database on startup
+# Initialize database when module loads (works with both Flask dev server and gunicorn)
+try:
     init_db()
-    
+except Exception as e:
+    print(f"Warning: Could not initialize database on startup: {e}")
+    print("Database will be initialized on first request if needed")
+
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
