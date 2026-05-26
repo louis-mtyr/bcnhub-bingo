@@ -55,7 +55,7 @@ def init_db():
             count = cur.fetchone()[0]
             
             if count == 0 and os.path.exists('items.json'):
-                with open('items.json', 'r', encoding='utf-8') as f:
+                with open('items.json', 'r', encoding='utf-8-sig') as f:
                     items_data = json.load(f)
                     for item in items_data:
                         cur.execute(
@@ -76,7 +76,7 @@ def get_users():
     if not conn:
         # Fallback to JSON file
         if os.path.exists('users.json'):
-            with open('users.json', 'r', encoding='utf-8') as f:
+            with open('users.json', 'r', encoding='utf-8-sig') as f:
                 return json.load(f)
         return {}
     
@@ -107,7 +107,7 @@ def save_user(username, user_data):
         # Fallback to JSON file
         users = {}
         if os.path.exists('users.json'):
-            with open('users.json', 'r', encoding='utf-8') as f:
+            with open('users.json', 'r', encoding='utf-8-sig') as f:
                 users = json.load(f)
         users[username] = user_data
         with open('users.json', 'w', encoding='utf-8') as f:
@@ -147,7 +147,7 @@ def get_items():
     if not conn:
         # Fallback to JSON file
         if os.path.exists('items.json'):
-            with open('items.json', 'r', encoding='utf-8') as f:
+            with open('items.json', 'r', encoding='utf-8-sig') as f:
                 data = json.load(f)
                 return [item['item'] for item in data]
         return []
@@ -168,7 +168,7 @@ def get_item_votes():
     if not conn:
         # Fallback to JSON file
         if os.path.exists('items.json'):
-            with open('items.json', 'r', encoding='utf-8') as f:
+            with open('items.json', 'r', encoding='utf-8-sig') as f:
                 data = json.load(f)
                 return {item['item']: item['votes'] for item in data}
         return {}
@@ -189,7 +189,7 @@ def save_item_votes(votes):
     if not conn:
         # Fallback to JSON file
         if os.path.exists('items.json'):
-            with open('items.json', 'r', encoding='utf-8') as f:
+            with open('items.json', 'r', encoding='utf-8-sig') as f:
                 data = json.load(f)
             for item in data:
                 if item['item'] in votes:
