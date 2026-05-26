@@ -1,51 +1,216 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 import json
 import random
-from datetime import datetime
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-USERS_FILE = 'users.json'
-ITEMS_FILE = 'items.json'
+# Database connection
+def get_db_connection():
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url:
+        # Render uses postgres:// but psycopg2 needs postgresql://
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        return psycopg2.connect(database_url)
+    else:
+        # Fallback to local SQLite-like behavior for development
+        return None
 
-def load_json(filename):
-    if os.path.exists(filename):
-        with open(filename, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
-
-def save_json(filename, data):
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def init_db():
+    """Initialize database tables"""
+    conn = get_db_connection()
+    if not conn:
+        print("No database connection available, using JSON files as fallback")
+        return
+    
+    try:
+        with conn.cursor() as cur:
+            # Create items table
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS items (
+                    id SERIAL PRIMARY KEY,
+                    item_text TEXT UNIQUE NOT NULL,
+                    votes INTEGER DEFAULT 0
+                )
+            ''')
+            
+            # Create users table
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    is_connected BOOLEAN DEFAULT FALSE,
+                    has_bingo BOOLEAN DEFAULT FALSE,
+                    grid JSONB,
+                    manifest_choices JSONB DEFAULT '[]',
+                    manifest_submitted BOOLEAN DEFAULT FALSE
+                )
+            ''')
+            
+            # Check if items table is empty and populate from items.json
+            cur.execute('SELECT COUNT(*) FROM items')
+            count = cur.fetchone()[0]
+            
+            if count == 0 and os.path.exists('items.json'):
+                with open('items.json', 'r', encoding='utf-8') as f:
+                    items_data = json.load(f)
+                    for item in items_data:
+                        cur.execute(
+                            'INSERT INTO items (item_text, votes) VALUES (%s, %s) ON CONFLICT (item_text) DO NOTHING',
+                            (item['item'], item['votes'])
+                        )
+            
+            conn.commit()
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
 
 def get_users():
-    users = load_json(USERS_FILE)
-    if not users:
+    """Get all users from database"""
+    conn = get_db_connection()
+    if not conn:
+        # Fallback to JSON file
+        if os.path.exists('users.json'):
+            with open('users.json', 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {}
+    
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('SELECT * FROM users')
+            rows = cur.fetchall()
+            users = {}
+            for row in rows:
+                users[row['username']] = {
+                    'is_connected': row['is_connected'],
+                    'has_bingo': row['has_bingo'],
+                    'grid': row['grid'],
+                    'manifest_choices': row['manifest_choices'],
+                    'manifest_submitted': row['manifest_submitted']
+                }
+            return users
+    except Exception as e:
+        print(f"Error getting users: {e}")
+        return {}
+    finally:
+        conn.close()
+
+def save_user(username, user_data):
+    """Save or update a user in the database"""
+    conn = get_db_connection()
+    if not conn:
+        # Fallback to JSON file
         users = {}
-        save_json(USERS_FILE, users)
-    return users
+        if os.path.exists('users.json'):
+            with open('users.json', 'r', encoding='utf-8') as f:
+                users = json.load(f)
+        users[username] = user_data
+        with open('users.json', 'w', encoding='utf-8') as f:
+            json.dump(users, f, ensure_ascii=False, indent=2)
+        return
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute('''
+                INSERT INTO users (username, is_connected, has_bingo, grid, manifest_choices, manifest_submitted)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (username) 
+                DO UPDATE SET 
+                    is_connected = EXCLUDED.is_connected,
+                    has_bingo = EXCLUDED.has_bingo,
+                    grid = EXCLUDED.grid,
+                    manifest_choices = EXCLUDED.manifest_choices,
+                    manifest_submitted = EXCLUDED.manifest_submitted
+            ''', (
+                username,
+                user_data.get('is_connected', False),
+                user_data.get('has_bingo', False),
+                json.dumps(user_data.get('grid', [])),
+                json.dumps(user_data.get('manifest_choices', [])),
+                user_data.get('manifest_submitted', False)
+            ))
+            conn.commit()
+    except Exception as e:
+        print(f"Error saving user: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
 
 def get_items():
-    data = load_json(ITEMS_FILE)
-    if isinstance(data, list):
-        return [item['item'] for item in data]
-    return []
+    """Get all item texts from database"""
+    conn = get_db_connection()
+    if not conn:
+        # Fallback to JSON file
+        if os.path.exists('items.json'):
+            with open('items.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return [item['item'] for item in data]
+        return []
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute('SELECT item_text FROM items ORDER BY id')
+            return [row[0] for row in cur.fetchall()]
+    except Exception as e:
+        print(f"Error getting items: {e}")
+        return []
+    finally:
+        conn.close()
 
 def get_item_votes():
-    data = load_json(ITEMS_FILE)
-    if isinstance(data, list):
-        return {item['item']: item['votes'] for item in data}
-    return {}
+    """Get votes for all items"""
+    conn = get_db_connection()
+    if not conn:
+        # Fallback to JSON file
+        if os.path.exists('items.json'):
+            with open('items.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return {item['item']: item['votes'] for item in data}
+        return {}
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute('SELECT item_text, votes FROM items')
+            return {row[0]: row[1] for row in cur.fetchall()}
+    except Exception as e:
+        print(f"Error getting item votes: {e}")
+        return {}
+    finally:
+        conn.close()
 
 def save_item_votes(votes):
-    data = load_json(ITEMS_FILE)
-    if isinstance(data, list):
-        for item in data:
-            if item['item'] in votes:
-                item['votes'] = votes[item['item']]
-        save_json(ITEMS_FILE, data)
+    """Update votes for items"""
+    conn = get_db_connection()
+    if not conn:
+        # Fallback to JSON file
+        if os.path.exists('items.json'):
+            with open('items.json', 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            for item in data:
+                if item['item'] in votes:
+                    item['votes'] = votes[item['item']]
+            with open('items.json', 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        return
+    
+    try:
+        with conn.cursor() as cur:
+            for item_text, vote_count in votes.items():
+                cur.execute(
+                    'UPDATE items SET votes = %s WHERE item_text = %s',
+                    (vote_count, item_text)
+                )
+            conn.commit()
+    except Exception as e:
+        print(f"Error saving item votes: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
 
 def generate_bingo_grid(items):
     """Generate a random 5x5 bingo grid"""
@@ -117,7 +282,7 @@ def login():
             else:
                 users[username]['is_connected'] = True
             
-            save_json(USERS_FILE, users)
+            save_user(username, users[username])
             session['username'] = username
             return redirect(url_for('bingo'))
     
@@ -151,7 +316,7 @@ def toggle_cell():
         has_bingo = check_bingo(users[username]['grid'])
         users[username]['has_bingo'] = has_bingo
         
-        save_json(USERS_FILE, users)
+        save_user(username, users[username])
         return jsonify({'success': True, 'has_bingo': has_bingo})
     
     return jsonify({'error': 'User not found'}), 404
@@ -250,7 +415,7 @@ def toggle_manifest_item():
             return jsonify({'error': 'Maximum 10 items allowed'}), 400
     
     users[username]['manifest_choices'] = choices
-    save_json(USERS_FILE, users)
+    save_user(username, users[username])
     
     return jsonify({'success': True, 'choices': choices})
 
@@ -282,7 +447,7 @@ def submit_manifest():
     
     # Mark user as submitted
     users[username]['manifest_submitted'] = True
-    save_json(USERS_FILE, users)
+    save_user(username, users[username])
     
     # Get top 10
     sorted_items = sorted(votes.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -299,10 +464,13 @@ def logout():
         users = get_users()
         if username in users:
             users[username]['is_connected'] = False
-            save_json(USERS_FILE, users)
+            save_user(username, users[username])
         session.pop('username', None)
     return redirect(url_for('login'))
 
 if __name__ == '__main__':
+    # Initialize database on startup
+    init_db()
+    
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
